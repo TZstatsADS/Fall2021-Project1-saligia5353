@@ -1,0 +1,429 @@
+---
+title: "Open the History of Philosophy with Data"
+author: "Spark Li, hl3431"
+date: "9/26/2021"
+output: html_document
+---
+
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+packages.used=c("dplyr", "tidyverse", "DT", "ggplot2", "ggpubr", "knitr")
+
+# check packages that need to be installed.
+packages.needed=setdiff(packages.used, 
+                        intersect(installed.packages()[,1], 
+                                  packages.used))
+# install additional packages
+if(length(packages.needed)>0){
+  install.packages(packages.needed, dependencies = TRUE)
+}
+
+# load packages
+library("dplyr")
+library("tidyverse")
+library("DT")
+library("ggplot2")
+library("ggpubr")
+library("knitr")
+```
+
+```{r, include=FALSE}
+print(R.version)
+```
+
+<p align="center">
+<img src="https://github.com/kcalizadeh/phil_nlp/blob/master/Pictures/word_clouds.png?raw=true"/>
+</p>
+Source [Kourosh Alizadeh](https://github.com/kcalizadeh/phil_nlp)
+
+Just imagine that: you are innocent about philosophy and one day you drop the 
+flashcards of your girlfriend uses for preparing PPE quiz by accident. The 
+flashcards are organized by each school of thought, and you have to recover
+them before she notices the condition.
+
+It's *Mission: Impossible*, isn't it? Even though for those who knows a little
+about philosophy, it's still *The Bourne Identity*. To be frank, that's exactly
+my first impression of the work clouds at the beginning. Describe each school's
+thought through word clouds? You're asking a cook to make a Coq au vin based
+on Le Coq gaulois.
+
+Notice that I'm not try to make objections on the common utility of word cloud. 
+Word cloud is epochal, especially dealing with speeches or questionnaires, the 
+data less academic and time dependent. The content of such text is less complicated.
+After removing stop words, the truths come out, in the order of significance. Nevertheless, for philosophy data, the utility of word cloud is
+suspect.
+
+How do we open the history of philosophy with data?
+
+This article aims to set up a connection between time/school and philosophy 
+works for general audience. Do more recent works have a longer sentence on average 
+than the classical ones? Do they criticize the classical or contemporary works 
+more frequently? Is there a cluster of certain schools which compares 
+works from 
+others more? Wait a minute, and let me take you there.
+
+```{r, include=FALSE}
+philosophy <- read.csv("../data/philosophy_data.csv", stringsAsFactors = FALSE) %>%
+  mutate(title = factor(title),
+         author = factor(author),
+         school = factor(school))
+
+apply(philosophy, 2, function(x) any(is.na(x)))
+
+# This article will not focus on the sentimental analysis or the topic modeling,
+# so we only select certain columns. The new dataset will be saved as
+# "philosophy_selected.csv" under the output folder.
+philosophy_selected <- philosophy %>%
+  select(title:school, original_publication_date:corpus_edition_date,
+         sentence_lowered, sentence_length) %>%
+  rename(original_publication = original_publication_date,
+         corpus_edition = corpus_edition_date,
+         sentence = sentence_lowered,
+         length = sentence_length)
+
+write.csv(philosophy_selected, 
+          file = "../output/philosophy_selected.csv",row.names=FALSE)
+
+rm(philosophy)
+```
+
+```{r, echo=FALSE}
+datatable(sample_n(philosophy_selected, 150),
+          options = list(autowidth = TRUE))
+```
+
+As the proverb goes, seeing is believing. For general audience, I believe it 
+necessary to have a brief introduction to the dataset, via an interactive example.
+Hence, here I take a random sample containing 150 records from the original
+dataset, and you can have a surfing using the table above in any ways you prefer, 
+but whatever the sample includes, it's always not difficult to see that the
+length of sentence really varies. **This phenomenon motivates the article.**
+Compared with the abstract, sophisticated content, we're more interested in the neat
+analysis related to concrete number.
+
+Nevertheless, we need to dig into more details of the relations among author, 
+school, and work firstly. It's absolutely possible for one author to have multiple
+works; it's also possible for one school to have multiple authors, but is there 
+any author who corresponds to multiple schools? This sounds not possible, but we
+need to have a check. If there is, the case will be more complicated.
+
+```{r, echo=FALSE, message=FALSE}
+title_amount <- philosophy_selected %>%
+  group_by(author) %>%
+  summarize(title_amount = n_distinct(title)) %>%
+  arrange(desc(title_amount))
+write.csv(title_amount, 
+          file = "../output/title_amount.csv",row.names=FALSE)
+
+author_amount <- philosophy_selected %>%
+  group_by(school) %>%
+  summarize(author_amount = n_distinct(author)) %>%
+  arrange(desc(author_amount))
+write.csv(author_amount, 
+          file = "../output/author_amount.csv",row.names=FALSE)
+
+g1 <- ggplot(title_amount, aes(x=author, y=title_amount)) +
+  geom_bar(stat = 'identity') +
+  xlab("author") + ylab("amount of works") +
+  coord_flip()
+ggsave("g1.png", path="../figs")
+
+g2 <- ggplot(author_amount, aes(x=school, y=author_amount)) +
+  geom_bar(stat = 'identity') +
+  xlab("school") + ylab("amount of authors") +
+  coord_flip()
+ggsave("g2.png", path="../figs")
+
+ggarrange(g1, g2, ncol = 2, nrow = 1)
+
+rm(title_amount); rm(author_amount); rm(g1); rm(g2)
+```
+
+```{r, echo=FALSE}
+school_amount <- philosophy_selected %>%
+  group_by(author) %>%
+  summarize(school_amount = n_distinct(school))
+write.csv(school_amount, 
+          file = "../output/school_amount.csv",row.names=FALSE)
+
+kable(school_amount, caption = "How many schools does each author correspond?")
+
+rm(school_amount)
+```
+
+Fortunately, only author-work and school-author are one-to-multiple relation. 
+All users in the database are only assigned in one school. Hence, We can jump to 
+the next stage, **the first question**, do more recent works have a longer 
+sentence on average than the classical ones? Before technical part, the first
+thing we need is to give a chronological definition of time. Usually there 
+are three eras in the history of philosophy, Ancient era, Medieval era, and 
+Modern era. Modern era is further divided into early modern era and late modern 
+era. The latter sometimes is called 19th-century philosophy. All works after it
+is considered Contemporary philosophy. Based on this general chronology, this
+article divides all works into four categories: **Ancient** (all works before 5th
+century), **Medieval** (between 5th and 16th century), **Modern** (between 
+17th and 19th century), and **Contemporary** (after 19th century).
+
+```{r, echo=FALSE}
+sentence_amount <- philosophy_selected %>%
+  group_by(author, title) %>%
+  count(original_publication, name = "sentence_amount") %>%
+  arrange(original_publication)
+write.csv(sentence_amount, 
+          file = "../output/sentence_amount.csv",row.names=FALSE)
+
+kable(head(sentence_amount, 5))
+
+rm(sentence_amount)
+```
+
+Noticeably, the table above ordered by original publication year indicates
+that no work falls in **Medieval** category, so there will be only three categories
+for all analyses related time in this article.
+
+```{r, echo=FALSE}
+philosophy_selected_category <- philosophy_selected %>%
+  mutate(category = case_when(
+    original_publication >= 1900 ~ "Contemporary",
+    original_publication >= 1500 ~ "Modern",
+    TRUE ~ "Ancient"
+  ))
+write.csv(philosophy_selected_category, 
+          file = "../output/philosophy_selected_category.csv",row.names=FALSE)
+
+rm(philosophy_selected)
+```
+
+Once category division is finished, the technical part comes. We want to know the 
+general distribution of sentence length over the category. In order to check if
+there exists any trend, box plots with path line is our choice.
+
+```{r, echo=FALSE, message=FALSE}
+philosophy_selected_g3 <- philosophy_selected_category %>%
+  group_by(category) %>%
+  summarize(mean_length = mean(length))
+
+g3 <- ggplot(philosophy_selected_category, aes(x=category, y=length)) +
+  geom_boxplot() +
+  geom_path(data = philosophy_selected_g3, 
+            aes(x=category, y=mean_length, group=1))
+
+ggsave("g3.png", path="../figs")
+
+g3
+
+rm(g3)
+```
+
+Whoops! It seems that there are too many outliers within all three categories,
+so we decide to cut off all sentences containing more than 500 words. Notice
+that we only drop those sentences in box plot for better visualization. The path
+line will be untouched.
+
+```{r, echo=FALSE, message=FALSE}
+philosophy_selected_category_filtered <- philosophy_selected_category %>%
+  filter(length <= 500)
+
+g4 <- ggplot(philosophy_selected_category_filtered, 
+             aes(x=category, y=length)) +
+  geom_boxplot() +
+  geom_path(data = philosophy_selected_g3, 
+            aes(x=category, y=mean_length, group=1))
+
+ggsave("g4.png", path="../figs")
+
+g4
+
+rm(philosophy_selected_g3); rm(g4)
+```
+
+It's clearer that recent works tend to have longer sentences on average than the 
+classical ones. This trend is revealed in the whole distribution, not only a
+couple of metrics such as median and mean.
+
+Someone may come up with such **a follow-up question**: is it possible that the
+increasing trend of sentence length is due to the school rather than time directly?
+We also make such a graph. Unfortunately, it's difficult to find a plausible trend among all schools, since some schools can be discussed in
+different time.
+
+```{r, echo=FALSE, message=FALSE}
+g5 <- ggplot(philosophy_selected_category_filtered, 
+             aes(x=school, y=length, color = category)) +
+  geom_boxplot() +
+  coord_flip()
+
+ggsave("g5.png", path="../figs")
+
+g5
+
+rm(philosophy_selected_category_filtered); rm(g5)
+```
+
+Now we come to **the second question**: do more recent works criticize the 
+classical or contemporary works more frequently? If we define "criticize" as "mention 
+the authors from earlier or the same era", a reasonable assumption to this 
+question is "Yes," as the successors are expected to cite from the precusors, 
+or they may just discuss previous topics in the society at their time. However,
+once we count all mentions of each sentence and sum them up, we can not find a 
+clear trend. It's true that Ancient works seldom mention other authors
+due to 
+time limit and author limit, but Contemporary works have much more fewer mentions
+than Modern works. A plausible explanation is that the amount of works in the 
+database are different over the time. An alternative criterion is to use appearance
+rate to make a comparison, but taking account the fact that the amount of mentions
+vary among many other factors such as author and sentence length (and don't
+forget that the latter also relates to time!), the process will be too complex
+for an article for general audience. Hence, we only compare amounts here.
+
+```{r, echo=FALSE}
+philosophy_selected_count <- philosophy_selected_category %>%
+  mutate(count_aristotle = str_count(sentence, "aristotle"),
+         count_beauvoir = str_count(sentence, "beauvoir"),
+         count_berkeley = str_count(sentence, "berkeley"),
+         count_davis = str_count(sentence, "davis"),
+         count_deleuze = str_count(sentence, "deleuze"),
+         count_derrida = str_count(sentence, "derrida"),
+         count_descartes = str_count(sentence, "descartes"),
+         count_epictetus = str_count(sentence, "epictetus"),
+         count_fichte = str_count(sentence, "fichte"),
+         count_foucault = str_count(sentence, "foucault"),
+         count_hegel = str_count(sentence, "hegel"),
+         count_heidegger = str_count(sentence, "heidegger"),
+         count_hume = str_count(sentence, "hume"),
+         count_husserl = str_count(sentence, "husserl"),
+         count_kant = str_count(sentence, "kant"),
+         count_keynes = str_count(sentence, "keynes"),
+         count_kripke = str_count(sentence, "kripke"),
+         count_leibniz = str_count(sentence, "leibniz"),
+         count_lenin = str_count(sentence, "lenin"),
+         count_lewis = str_count(sentence, "lewis"),
+         count_locke = str_count(sentence, "locke"),
+         count_malebranche = str_count(sentence, "malebranche"),
+         count_marcus_aurelius = str_count(sentence, "marcus aurelius"),
+         count_marx = str_count(sentence, "marx"),
+         count_merleau_ponty = str_count(sentence, "merleau-ponty"),
+         count_moore = str_count(sentence, "moore"),
+         count_nietzsche = str_count(sentence, "nietzsche"),
+         count_plato = str_count(sentence, "plato"),
+         count_popper = str_count(sentence, "popper"),
+         count_quine = str_count(sentence, "quine"),
+         count_ricardo = str_count(sentence, "ricardo"),
+         count_russell = str_count(sentence, "russell"),
+         count_smith = str_count(sentence, "smith"),
+         count_spinoza = str_count(sentence, "spinoza"),
+         count_wittgenstein = str_count(sentence, "wittgenstein"),
+         count_wollstonecraft = str_count(sentence, "wollstonecraft"))
+
+philosophy_category_count <- philosophy_selected_count %>%
+  group_by(category) %>%
+  summarize(count_aristotle_sum = sum(count_aristotle),
+         count_beauvoir_sum = sum(count_beauvoir),
+         count_berkeley_sum = sum(count_berkeley),
+         count_davis_sum = sum(count_davis),
+         count_deleuze_sum = sum(count_deleuze),
+         count_derrida_sum = sum(count_derrida),
+         count_descartes_sum = sum(count_descartes),
+         count_epictetus_sum = sum(count_epictetus),
+         count_fichte_sum = sum(count_fichte),
+         count_foucault_sum = sum(count_foucault),
+         count_hegel_sum = sum(count_hegel),
+         count_heidegger_sum = sum(count_heidegger),
+         count_hume_sum = sum(count_hume),
+         count_husserl_sum = sum(count_husserl),
+         count_kant_sum = sum(count_kant),
+         count_keynes_sum = sum(count_keynes),
+         count_kripke_sum = sum(count_kripke),
+         count_leibniz_sum = sum(count_leibniz),
+         count_lenin_sum = sum(count_lenin),
+         count_lewis_sum = sum(count_lewis),
+         count_locke_sum = sum(count_locke),
+         count_malebranche_sum = sum(count_malebranche),
+         count_marcus_aurelius_sum = sum(count_marcus_aurelius),
+         count_marx_sum = sum(count_marx),
+         count_merleau_ponty_sum = sum(count_merleau_ponty),
+         count_moore_sum = sum(count_moore),
+         count_nietzsche_sum = sum(count_nietzsche),
+         count_plato_sum = sum(count_plato),
+         count_popper_sum = sum(count_popper),
+         count_quine_sum = sum(count_quine),
+         count_ricardo_sum = sum(count_ricardo),
+         count_russell_sum = sum(count_russell),
+         count_smith_sum = sum(count_smith),
+         count_spinoza_sum = sum(count_spinoza),
+         count_wittgenstein_sum = sum(count_wittgenstein),
+         count_wollstonecraft_sum = sum(count_wollstonecraft))
+philosophy_category_count$count_sum = rowSums(philosophy_category_count[,c(-1)])
+
+philosophy_category_count <- philosophy_category_count %>%
+  select(category, count_sum)
+
+write.csv(philosophy_category_count, 
+          file = "../output/philosophy_category_count.csv",
+          row.names=FALSE)
+
+kable(philosophy_category_count, 
+      caption = "How many times does each era criticize other works?")
+
+rm(philosophy_category_count)
+```
+
+**The last question** follows a similar process, but this time the comparison
+is more reliable because the data is more balanced when we discuss the school.
+Among all 13 schools, the analytic and continental school have authors who like 
+mentioning other authors most; the phenomenology school forms a single cluster; 
+the german_idealism, communism, and rationalism school composes the third cluster, 
+while all the rest schools tend not to make a comparison or citation from others in 
+their works.
+
+```{r, echo=FALSE}
+philosophy_school_count <- philosophy_selected_count %>%
+  group_by(school) %>%
+  summarize(count_aristotle_sum = sum(count_aristotle),
+         count_beauvoir_sum = sum(count_beauvoir),
+         count_berkeley_sum = sum(count_berkeley),
+         count_davis_sum = sum(count_davis),
+         count_deleuze_sum = sum(count_deleuze),
+         count_derrida_sum = sum(count_derrida),
+         count_descartes_sum = sum(count_descartes),
+         count_epictetus_sum = sum(count_epictetus),
+         count_fichte_sum = sum(count_fichte),
+         count_foucault_sum = sum(count_foucault),
+         count_hegel_sum = sum(count_hegel),
+         count_heidegger_sum = sum(count_heidegger),
+         count_hume_sum = sum(count_hume),
+         count_husserl_sum = sum(count_husserl),
+         count_kant_sum = sum(count_kant),
+         count_keynes_sum = sum(count_keynes),
+         count_kripke_sum = sum(count_kripke),
+         count_leibniz_sum = sum(count_leibniz),
+         count_lenin_sum = sum(count_lenin),
+         count_lewis_sum = sum(count_lewis),
+         count_locke_sum = sum(count_locke),
+         count_malebranche_sum = sum(count_malebranche),
+         count_marcus_aurelius_sum = sum(count_marcus_aurelius),
+         count_marx_sum = sum(count_marx),
+         count_merleau_ponty_sum = sum(count_merleau_ponty),
+         count_moore_sum = sum(count_moore),
+         count_nietzsche_sum = sum(count_nietzsche),
+         count_plato_sum = sum(count_plato),
+         count_popper_sum = sum(count_popper),
+         count_quine_sum = sum(count_quine),
+         count_ricardo_sum = sum(count_ricardo),
+         count_russell_sum = sum(count_russell),
+         count_smith_sum = sum(count_smith),
+         count_spinoza_sum = sum(count_spinoza),
+         count_wittgenstein_sum = sum(count_wittgenstein),
+         count_wollstonecraft_sum = sum(count_wollstonecraft))
+philosophy_school_count$count_sum = rowSums(philosophy_school_count[,c(-1)])
+
+philosophy_school_count <- philosophy_school_count %>%
+  select(school, count_sum) %>%
+  arrange(desc(count_sum))
+
+write.csv(philosophy_school_count, 
+          file = "../output/philosophy_school_count.csv",row.names=FALSE)
+
+kable(philosophy_school_count, 
+      caption = "How many times does each school criticize other works?")
+
+rm(philosophy_school_count); rm(philosophy_selected_count)
+```
